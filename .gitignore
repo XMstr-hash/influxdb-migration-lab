@@ -1,0 +1,8 @@
+# Environment / secrets
+.env
+
+# Logs
+.log
+
+# Docker
+docker-data/

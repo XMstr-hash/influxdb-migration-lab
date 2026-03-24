@@ -1,73 +1,132 @@
-Write-Host "=== InfluxDB 3 Lab One-Click Setup ==="
+$ErrorActionPreference = "Stop"
 
-# 1. Check if Docker is installed
-docker --version | Out-Null
-if ($LASTEXITCODE -ne 0) {
-    Write-Host "❌ Docker is not installed!"
-    exit
+Write-Host "=== InfluxDB 3 Lab Install ==="
+Write-Host ""
+
+function Step($msg) {
+    Write-Host ""
+    Write-Host "---- $msg ----"
 }
 
-# 2. Create .env file if it does not exist
+function Fail($msg) {
+    Write-Host ""
+    Write-Host "ERROR: $msg"
+    exit 1
+}
+
+Step "Check Docker"
+docker --version
+if ($LASTEXITCODE -ne 0) {
+    Fail "Docker is not installed or not in PATH."
+}
+
+Step "Create .env if missing"
 if (!(Test-Path ".env")) {
-    Write-Host "Creating .env file..."
-    @"
+@"
 INFLUX_TOKEN=
 INFLUX_DB=metrics
 INFLUX_URL=http://influxdb3:8181
 "@ | Out-File -Encoding utf8 .env
+    Write-Host ".env created"
+} else {
+    Write-Host ".env already exists"
 }
 
-# 3. Start Docker containers
-Write-Host "Starting containers..."
+Step "Current .env content"
+Get-Content .env
+
+Step "Start containers"
 docker compose up -d
+if ($LASTEXITCODE -ne 0) {
+    Fail "docker compose up failed."
+}
 
-# Wait for services to initialize
-Start-Sleep -Seconds 5
+Step "Wait for InfluxDB"
+Start-Sleep -Seconds 8
 
-# 4. Check if token already exists in .env
+Step "Show container status"
+docker ps
+
+Step "Show InfluxDB startup logs"
+docker logs --tail 30 influxdb3
+
+Step "Read token line from .env"
 $envContent = Get-Content .env
 $tokenLine = $envContent | Where-Object { $_ -like "INFLUX_TOKEN=*" }
 
-if ($tokenLine -match "INFLUX_TOKEN=$") {
+if (-not $tokenLine) {
+    Fail "INFLUX_TOKEN line not found in .env"
+}
 
-    Write-Host "Generating admin token..."
+Write-Host "Token line: $tokenLine"
 
-    # Create admin token inside container
-    $tokenOutput = docker exec influxdb3 influxdb3 create token --admin
+if ($tokenLine -eq "INFLUX_TOKEN=") {
+    Step "Generate admin token"
 
-    # Extract token from output
-    $token = ($tokenOutput | Select-String "apiv3_").ToString().Trim()
+    $tokenOutput = docker exec influxdb3 influxdb3 create token --admin 2>&1
+    $raw = ($tokenOutput | Out-String).Trim()
 
-    if (-not $token) {
-        Write-Host "❌ Failed to generate token"
-        exit
+    Write-Host "Raw token output:"
+    Write-Host "-----------------"
+    Write-Host $raw
+    Write-Host "-----------------"
+
+    if ($raw -match 'apiv3_[A-Za-z0-9\-_]+') {
+        $token = $Matches[0]
+        Write-Host "Extracted token: $token"
+
+        (Get-Content .env) -replace '^INFLUX_TOKEN=.*', "INFLUX_TOKEN=$token" |
+            Set-Content .env
+
+        Write-Host ".env updated"
+    } else {
+        Fail "Could not extract token from CLI output."
     }
-
-    Write-Host "Token successfully created."
-
-    # Save token into .env file
-    (Get-Content .env) -replace "INFLUX_TOKEN=", "INFLUX_TOKEN=$token" |
-        Set-Content .env
 }
 else {
-    $token = ($tokenLine -replace "INFLUX_TOKEN=", "")
-    Write-Host "Token already exists in .env"
+    $token = $tokenLine -replace "^INFLUX_TOKEN=", ""
+    Write-Host "Token already present in .env"
+    Write-Host "Token: $token"
 }
 
-# 5. Create database (if not exists)
-Write-Host "Creating database (metrics)..."
+Step "Show .env after token step"
+Get-Content .env
 
-docker exec influxdb3 influxdb3 create database metrics --token $token 2>$null
+if (-not $token -or $token -eq "apiv3_replace_me") {
+    Fail "Token is empty or placeholder."
+}
 
-# 6. Restart Telegraf to apply new token
-Write-Host "Restarting Telegraf..."
+Step "Create database"
+$dbLine = $envContent | Where-Object { $_ -like "INFLUX_DB=*" }
+if (-not $dbLine) {
+    Fail "INFLUX_DB line not found in .env"
+}
+$db = $dbLine -replace "^INFLUX_DB=", ""
+Write-Host "Database name: $db"
+
+$createDbOutput = docker exec influxdb3 influxdb3 create database $db --token $token 2>&1
+Write-Host "Create database output:"
+Write-Host "-----------------------"
+Write-Host ($createDbOutput | Out-String).Trim()
+Write-Host "-----------------------"
+
+Step "Verify databases"
+$showDbOutput = docker exec influxdb3 influxdb3 show databases --token $token 2>&1
+Write-Host ($showDbOutput | Out-String).Trim()
+
+Step "Restart Telegraf"
 docker compose restart telegraf
+if ($LASTEXITCODE -ne 0) {
+    Fail "Failed to restart Telegraf."
+}
 
-# 7. Final output
+Start-Sleep -Seconds 15
+
+Step "Show Telegraf logs"
+docker logs --tail 30 telegraf
+
 Write-Host ""
-Write-Host "✅ Setup complete!"
-Write-Host ""
-Write-Host "Access services:"
-Write-Host "Grafana:     http://localhost:3000"
+Write-Host "=== Setup complete ==="
+Write-Host "Grafana:      http://localhost:3000"
 Write-Host "InfluxDB API: http://localhost:8181"
 Write-Host ""

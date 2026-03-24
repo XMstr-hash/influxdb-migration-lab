@@ -122,8 +122,16 @@ if ($LASTEXITCODE -ne 0) {
 
 Start-Sleep -Seconds 15
 
+docker compose down
+
+Start-Sleep -Seconds 5
+
+docker compose up -d
+
+Start-Sleep -Seconds 15
+
 Step "Show Telegraf logs"
-docker logs --tail 30 telegraf
+docker logs --tail 20 telegraf
 
 Write-Host ""
 Write-Host "=== Setup complete ==="

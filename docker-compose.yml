@@ -34,6 +34,23 @@ services:
       - INFLUX_DB=${INFLUX_DB}
       - INFLUX_URL=${INFLUX_URL}
 
+  influxdb2:
+    image: influxdb:2
+    container_name: influxdb2
+    ports:
+      - "8086:8086"
+    volumes:
+      - influxdb2-data:/var/lib/influxdb2
+      - influxdb2-config:/etc/influxdb2
+    environment:
+      DOCKER_INFLUXDB_INIT_MODE: setup
+      DOCKER_INFLUXDB_INIT_USERNAME: admin
+      DOCKER_INFLUXDB_INIT_PASSWORD: strongpassword
+      DOCKER_INFLUXDB_INIT_ORG: my-org
+      DOCKER_INFLUXDB_INIT_BUCKET: my-bucket
+
 volumes:
   influxdb3-data:
   grafana-data:
+  influxdb2-data:
+  influxdb2-config:
